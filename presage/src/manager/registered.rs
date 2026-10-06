@@ -30,7 +30,7 @@ use libsignal_service::{
         Aci, DeviceId, IdentityKeyStore, SenderCertificate, ServiceId, ServiceIdKind, Username,
     },
     provisioning::ProvisioningError,
-    push_service::{PushService, ServiceIds, DEFAULT_DEVICE_ID},
+    push_service::{AvatarWrite, PushService, ServiceIds, DEFAULT_DEVICE_ID},
     receiver::MessageReceiver,
     sender::{AttachmentSpec, AttachmentUploadError},
     sticker_cipher::derive_key,
@@ -418,12 +418,41 @@ impl<S: Store> Manager<S, Registered> {
         Ok(profile)
     }
 
-    /// Updates the user's profile information.
+    /// Updates the user's profile information, keeping the current avatar.
     pub async fn update_profile(
         &mut self,
         name: libsignal_service::profile_name::ProfileName<String>,
         about: Option<String>,
         emoji: Option<String>,
+    ) -> Result<(), Error<S::Error>> {
+        self.write_profile::<std::io::Empty>(name, about, emoji, AvatarWrite::RetainAvatar)
+            .await
+    }
+
+    /// Updates the user's profile information and avatar.
+    ///
+    /// `avatar` is the image file (e.g. JPEG or PNG) to use, or `None` to remove the avatar.
+    pub async fn update_profile_with_avatar(
+        &mut self,
+        name: libsignal_service::profile_name::ProfileName<String>,
+        about: Option<String>,
+        emoji: Option<String>,
+        avatar: Option<&[u8]>,
+    ) -> Result<(), Error<S::Error>> {
+        let mut avatar = avatar.map(std::io::Cursor::new);
+        let avatar = match avatar.as_mut() {
+            Some(avatar) => AvatarWrite::NewAvatar(avatar),
+            None => AvatarWrite::NoAvatar,
+        };
+        self.write_profile(name, about, emoji, avatar).await
+    }
+
+    async fn write_profile<C: std::io::Read + Send>(
+        &mut self,
+        name: libsignal_service::profile_name::ProfileName<String>,
+        about: Option<String>,
+        emoji: Option<String>,
+        avatar: AvatarWrite<&mut C>,
     ) -> Result<(), Error<S::Error>> {
         let aci = self.state.data.service_ids.aci();
         let mut account_manager = AccountManager::new(
@@ -433,14 +462,7 @@ impl<S: Store> Manager<S, Registered> {
         );
 
         account_manager
-            .upload_versioned_profile_without_avatar::<_, String>(
-                aci,
-                name,
-                about,
-                emoji,
-                true, // retain_avatar
-                &mut rand::rng(),
-            )
+            .upload_versioned_profile(aci, name, about, emoji, avatar, &mut rand::rng())
             .await?;
 
         // Retrieve and save locally so we have the updated version
