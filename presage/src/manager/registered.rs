@@ -1070,16 +1070,41 @@ impl<S: Store> Manager<S, Registered> {
         message: impl Into<ContentBody>,
         timestamp: u64,
     ) -> Result<(), Error<S::Error>> {
-        let mut sender = self.new_message_sender().await?;
-        let recipient = recipient.into();
-
-        let online_only = false;
         // TODO: Populate this flag based on the recipient information
         //
         // Issue <https://github.com/whisperfish/presage/issues/252>
-        let include_pni_signature = false;
+        self.send_message_inner(recipient.into(), message.into(), timestamp, false)
+            .await
+    }
+
+    /// Like [Manager::send_message], but attaches a PNI signature proving that our ACI owns our
+    /// phone number identity.
+    ///
+    /// Use this when replying to a contact who addressed us by our PNI (i.e. they only know our
+    /// phone number). Without it their client can't link the reply to the conversation they
+    /// started and shows it as coming from an unknown contact.
+    pub async fn send_message_with_pni_signature(
+        &mut self,
+        recipient: impl Into<ServiceId>,
+        message: impl Into<ContentBody>,
+        timestamp: u64,
+    ) -> Result<(), Error<S::Error>> {
+        self.send_message_inner(recipient.into(), message.into(), timestamp, true)
+            .await
+    }
+
+    async fn send_message_inner(
+        &mut self,
+        recipient: ServiceId,
+        message: ContentBody,
+        timestamp: u64,
+        include_pni_signature: bool,
+    ) -> Result<(), Error<S::Error>> {
+        let mut sender = self.new_message_sender().await?;
+
+        let online_only = false;
         let thread = Thread::Contact(recipient);
-        let mut content_body: ContentBody = message.into();
+        let mut content_body = message;
 
         self.restore_thread_timer(&thread, &mut content_body).await;
 
