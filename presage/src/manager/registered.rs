@@ -491,7 +491,25 @@ impl<S: Store> Manager<S, Registered> {
                 .iter()
                 .map(|candidate| Username::new(candidate))
                 .collect::<Result<Vec<_>, _>>()?;
+        self.reserve_and_confirm_username(candidates).await
+    }
 
+    /// Claims exactly `username`, replacing the current username if there is one.
+    ///
+    /// Use [Username::from_parts] to pick the discriminator yourself, e.g. `nickname.01`. Fails
+    /// with [Error::UsernameNotAvailable] if someone else has it, leaving the current username
+    /// as it is.
+    pub async fn claim_username(
+        &mut self,
+        username: Username,
+    ) -> Result<ConfirmedUsername, Error<S::Error>> {
+        self.reserve_and_confirm_username(vec![username]).await
+    }
+
+    async fn reserve_and_confirm_username(
+        &mut self,
+        candidates: Vec<Username>,
+    ) -> Result<ConfirmedUsername, Error<S::Error>> {
         let mut websocket = self.identified_websocket(false).await?;
         let reservation = websocket
             .reserve_username(candidates)
