@@ -27,7 +27,8 @@ use libsignal_service::{
         Verified,
     },
     protocol::{
-        Aci, DeviceId, IdentityKeyStore, SenderCertificate, ServiceId, ServiceIdKind, Username,
+        Aci, DeviceId, IdentityKeyStore, NicknameLimits, SenderCertificate, ServiceId,
+        ServiceIdKind, Username,
     },
     provisioning::ProvisioningError,
     push_service::{AvatarWrite, PushService, ServiceIds, DEFAULT_DEVICE_ID},
@@ -39,6 +40,7 @@ use libsignal_service::{
     websocket::{
         self,
         account::{AccountAttributes, DeviceCapabilities, DeviceInfo, WhoAmIResponse},
+        usernames::ConfirmedUsername,
         SignalWebSocket,
     },
     zkgroup::{
@@ -473,6 +475,41 @@ impl<S: Store> Manager<S, Registered> {
             .await;
 
         Ok(())
+    }
+
+    /// Claims a username `nickname.NN` with a random discriminator `NN`, replacing the current
+    /// username if there is one.
+    ///
+    /// Tries a batch of random discriminators at once, like the official clients. Returns the
+    /// username and a shareable `https://signal.me/#eu/...` link for it.
+    pub async fn set_username(
+        &mut self,
+        nickname: &str,
+    ) -> Result<ConfirmedUsername, Error<S::Error>> {
+        let candidates =
+            Username::candidates_from(&mut rand::rng(), nickname, NicknameLimits::default())?
+                .iter()
+                .map(|candidate| Username::new(candidate))
+                .collect::<Result<Vec<_>, _>>()?;
+
+        let mut websocket = self.identified_websocket(false).await?;
+        let reservation = websocket
+            .reserve_username(candidates)
+            .await?
+            .ok_or(Error::UsernameNotAvailable)?;
+        websocket
+            .confirm_username(reservation)
+            .await?
+            .ok_or(Error::UsernameReservationLost)
+    }
+
+    /// Removes the username and username link. Succeeds if there was no username.
+    pub async fn delete_username(&mut self) -> Result<(), Error<S::Error>> {
+        Ok(self
+            .identified_websocket(false)
+            .await?
+            .delete_username()
+            .await?)
     }
 
     pub async fn retrieve_group_avatar(
