@@ -1530,7 +1530,7 @@ impl<S: Store> Manager<S, Registered> {
                 .service_configuration()
                 .unidentified_sender_trust_roots,
             ProtocolAddress::new(
-                self.state.data.service_ids.pni.to_string(),
+                self.state.data.service_ids.pni().service_id_string(),
                 self.state.device_id(),
             ),
         )
